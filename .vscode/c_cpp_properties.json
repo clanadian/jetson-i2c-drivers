@@ -1,0 +1,15 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/home/cldy/jetson-kernel/kernel-src/kernel/kernel-4.9/include",
+                "/home/cldy/jetson-kernel/kernel-src/kernel/kernel-4.9/arch/arm64/include"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc"
+        }
+    ],
+    "version": 4
+}
