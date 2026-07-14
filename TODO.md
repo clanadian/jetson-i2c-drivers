@@ -66,21 +66,24 @@
 인터럽트(9번)는 시간 남을 때만 — 처음부터 욕심내지 않기.
 
 ## 10. mpu6050_i2c.c 코드 리뷰 수정사항 (컴파일 에러급)
-- [ ] `mpu6050_i2c_open`이 두 번 정의됨 — 두 번째 것(module_put 있는 쪽)을 `mpu6050_i2c_release`로 개명
-- [ ] `struct file_operations mpu6050_i2c_driver`가 `struct i2c_driver mpu6050_i2c_driver`랑 이름 겹침 → `mpu6050_i2c_fops`로 개명
-- [ ] probe/remove forward declaration이 `struct spi_device *spi`로 되어있음(SPI 복붙 잔재) → 실제 정의(`struct i2c_client *`)랑 맞추거나 삭제
-- [ ] `mpu6050_i2c_remove()` 인자 0개 → `struct i2c_client *client` 추가 필요
-- [ ] `sturct` 오타 → `struct`
-- [ ] `i2c_smbus_read_i2c_block_data(..., *values)` → `*values`가 아니라 `values`(포인터 그대로)
-- [ ] 함수명 불일치: 정의는 `mpu6050_i2c_read_block_data`, 호출은 `mpu6050_i2c_read_block` → 통일
+- [x] `mpu6050_i2c_open`이 두 번 정의됨 — 두 번째 것(module_put 있는 쪽)을 `mpu6050_i2c_release`로 개명
+- [x] `struct file_operations mpu6050_i2c_driver`가 `struct i2c_driver mpu6050_i2c_driver`랑 이름 겹침 → `mpu6050_i2c_fops`로 개명
+- [x] probe/remove forward declaration이 `struct spi_device *spi`로 되어있음(SPI 복붙 잔재) → 실제 정의(`struct i2c_client *`)랑 맞추거나 삭제
+- [x] `mpu6050_i2c_remove()` 인자 0개 → `struct i2c_client *client` 추가 필요
+> 왜? 어차피 전역변수 g_client 쓰는 게 아닌지?
+- [x] `sturct` 오타 → `struct`
+- [x] `i2c_smbus_read_i2c_block_data(..., *values)` → `*values`가 아니라 `values`(포인터 그대로)
+- [x] 함수명 불일치: 정의는 `mpu6050_i2c_read_block_data`, 호출은 `mpu6050_i2c_read_block` → 통일
 - [ ] `mpu6050_i2c_read(struct file *flip, char __user *buf)` 인자 부족 → `size_t count, loff_t *off` 추가 (fops `.read` 시그니처 맞춰야 함), 관련 forward declaration(ioctl 시그니처로 되어있는 것)도 삭제/수정
+> 무슨 소리인지 모르겠어요. 
 
 ## 11. mpu6050_i2c.c 코드 리뷰 수정사항 (로직 버그)
-- [ ] `MKDEV(MPU6050_I2C_DEV_MAJOR, 0)` (init/exit 둘 다) → `devno`로 교체 (alloc_chrdev_region 쓰기로 했으니 하드코딩 major 안 씀)
+- [x] `MKDEV(MPU6050_I2C_DEV_MAJOR, 0)` (init/exit 둘 다) → `devno`로 교체 (alloc_chrdev_region 쓰기로 했으니 하드코딩 major 안 씀)
 - [ ] `cdev_init()`/`cdev_add()` 완전히 빠져있음 → `<linux/cdev.h>` include, `static struct cdev mpu6050_cdev;` 추가, init에서 cdev_init+cdev_add, exit에서 cdev_del
-- [ ] `class_create(MPU6050_I2C_DEV_NAME)` → 이 커널(4.9)은 2-인자라 `class_create(THIS_MODULE, MPU6050_I2C_DEV_NAME)`로 수정
+> 무슨 소리인지 모르겠어요.
+- [x] `class_create(MPU6050_I2C_DEV_NAME)` → 이 커널(4.9)은 2-인자라 `class_create(THIS_MODULE, MPU6050_I2C_DEV_NAME)`로 수정
 
 ## 12. mpu6050_i2c.c 코드 리뷰 수정사항 (사소함)
-- [ ] `mpu6050_i2c.h`의 `MPU6050_I2C_MAGIC` — ioctl 안 쓰기로 했으니 미사용, 정리 대상
+- [x] `mpu6050_i2c.h`의 `MPU6050_I2C_MAGIC` — ioctl 안 쓰기로 했으니 미사용, 정리 대상
 - [ ] `mpu6050_i2c_read()`의 `//파싱` 자리 — accel/gyro 파싱 로직 아직 미구현
-- [ ] `flip` → `filp` 오타로 보임 (동작엔 문제없음)
+- [x] `flip` → `filp` 오타로 보임 (동작엔 문제없음)

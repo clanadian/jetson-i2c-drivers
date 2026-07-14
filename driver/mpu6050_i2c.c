@@ -7,6 +7,7 @@
 #include <linux/mutex.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
+#include <linux/cdev.h>
 
 #include "mpu6050_i2c.h"
 
@@ -21,11 +22,14 @@ static const struct of_device_id mpu6050_i2c_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, mpu6050_i2c_of_match);
 
-static int mpu6050_i2c_probe(struct spi_device *spi);
-static void mpu6050_i2c_remove(struct spi_device *spi);
+static int mpu6050_i2c_init(void);
+static int mpu6050_i2c_read_block_data(const struct i2c_client *client, u8 command, u8 length, u8 *values);
+static void mpu6050_i2c_exit(void);
+static int mpu6050_i2c_probe(struct i2c_client *client, const struct i2c_device_id *id);
+static int mpu6050_i2c_remove(struct i2c_client *client);
 static int mpu6050_i2c_open(struct inode *inode, struct file *filp);
 static int mpu6050_i2c_release(struct inode *inode, struct file *filp);
-static long mpu6050_i2c_read(struct file *filp, unsigned int cmd, unsigned long arg);
+static ssize_t mpu6050_i2c_read(struct file *filp, char __user *buf);
 
 static struct i2c_driver mpu6050_i2c_driver = {
     .driver = {
@@ -36,7 +40,7 @@ static struct i2c_driver mpu6050_i2c_driver = {
     .remove = mpu6050_i2c_remove
 };
 
-static struct file_operations mpu6050_i2c_driver = {
+static struct file_operations mpu6050_i2c_fops = {
     .open     = mpu6050_i2c_open,
     .release  = mpu6050_i2c_release,
     .read     = mpu6050_i2c_read
@@ -45,6 +49,7 @@ static struct file_operations mpu6050_i2c_driver = {
 static struct i2c_client *g_client;
 static dev_t devno;
 static struct class *mpu6050_i2c_class;
+static struct cdev mpu6050_cdev;
 
 
 static int mpu6050_i2c_init(void){
@@ -60,15 +65,24 @@ static int mpu6050_i2c_init(void){
         return ret;
     }
 
-    mpu6050_i2c_class = class_create(MPU6050_I2C_DEV_NAME);
+    cdev_init(&mpu6050_cdev, &mpu6050_i2c_fops);
+    ret = cdev_add(&mpu6050_cdev, devno, 1);
+    if (ret < 0) {
+        unregister_chrdev_region(devno, 1);
+        i2c_del_driver(&mpu6050_i2c_driver);
+        return ret;
+    }
+
+    mpu6050_i2c_class = class_create(THIS_MODULE, MPU6050_I2C_DEV_NAME);
     if (IS_ERR(mpu6050_i2c_class)){
         unregister_chrdev_region(devno, 1);
         i2c_del_driver(&mpu6050_i2c_driver);
         return PTR_ERR(mpu6050_i2c_class);
     }
 
-    dev = device_create(mpu6050_i2c_class, NULL, MKDEV(MPU6050_I2C_DEV_MAJOR, 0),
+    dev = device_create(mpu6050_i2c_class, NULL, devno,
                         NULL, MPU6050_I2C_DEV_NAME);
+        
     if (IS_ERR(dev)){
         class_destroy(mpu6050_i2c_class);
         unregister_chrdev_region(devno, 1);
@@ -83,7 +97,7 @@ static int mpu6050_i2c_init(void){
 static int mpu6050_i2c_read_block_data(const struct i2c_client *client, u8 command, u8 length, u8 *values){
     s32 val;
 
-    val = i2c_smbus_read_i2c_block_data(client, command, length, *values);
+    val = i2c_smbus_read_i2c_block_data(client, command, length, values);
     if (val != MPU6050_I2C_BLOCK_LEN){
         printk(KERN_ERR "mpu6050 read block fail: %d\n",val);
         return val;
@@ -93,8 +107,9 @@ static int mpu6050_i2c_read_block_data(const struct i2c_client *client, u8 comma
 }
 
 static void mpu6050_i2c_exit(void){
-    device_destroy(mpu6050_i2c_class, MKDEV(MPU6050_I2C_DEV_MAJOR, 0));
+    device_destroy(mpu6050_i2c_class, devno);
     class_destroy(mpu6050_i2c_class);
+    cdev_del(&mpu6050_cdev);
     unregister_chrdev_region(devno, 1);
     i2c_del_driver(&mpu6050_i2c_driver);
 }
@@ -114,31 +129,41 @@ static int mpu6050_i2c_probe(struct i2c_client *client, const struct i2c_device_
     return 0;
 }
 
-static int mpu6050_i2c_remove(){
-    g_client = NULL;
-    printk(KERN_INFO "mpu6050 i2c disconnected\n");
-    return 0;
-}
+    static int mpu6050_i2c_remove(struct i2c_client *client){
+        g_client = NULL;
+        printk(KERN_INFO "mpu6050 i2c disconnected\n");
+        return 0;
+    }
 
-static int mpu6050_i2c_open(struct inode *inode, sturct file *flip){
+static int mpu6050_i2c_open(struct inode *inode, struct file *filp){
     try_module_get(THIS_MODULE);
     return 0;
 }
 
-static int mpu6050_i2c_release(struct inode *inode, struct file *flip){
+static int mpu6050_i2c_release(struct inode *inode, struct file *filp){
     module_put(THIS_MODULE);
     return 0;
 }
 
-static ssize_t mpu6050_i2c_read(struct file *flip, char __user *buf){
+static ssize_t mpu6050_i2c_read(struct file *filp, char __user *buf, size_t count, loff_t *off) {
     u8 raw[MPU6050_I2C_BLOCK_LEN];
     struct mpu6050_data data;
 
-    mpu6050_i2c_read_block(g_client, 0x3B, raw, MPU6050_I2C_BLOCK_LEN);
-    //파싱
+    mpu6050_i2c_read_block_data(g_client, 0x3B, raw, MPU6050_I2C_BLOCK_LEN);
+    mpu6050_i2c_parsing(raw, &data)
 
     copy_to_user(buf, &data, sizeof(data));
     return sizeof(data);
+}
+
+static void mpu6050_i2c_parsing(const u8 *raw, struct mpu6050_data *data) {
+    data->accel_x = (raw[0] << 8) | raw[1];
+    data->accel_y = (raw[2] << 8) | raw[3];
+    data->accel_z = (raw[4] << 8) | raw[5];
+    data->temp    = (raw[6] << 8) | raw[7];
+    data->gyro_x  = (raw[8] << 8) | raw[9];
+    data->gyro_y  = (raw[10] << 8) | raw[11];
+    data->gyro_z  = (raw[12] << 8) | raw[13];
 }
 
 module_init(mpu6050_i2c_init);
