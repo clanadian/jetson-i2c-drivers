@@ -6,12 +6,13 @@
 #include <linux/device.h>
 #include <linux/cdev.h>
 #include <linux/uaccess.h>
-#include <linux/jiffies.h>
+#include <linux/slab.h>
+#include <linux/delay.h>
 
-#include "at24c256_i2c.h"
+#include "../include/at24c256_i2c.h"
 
 #define AT24C256_I2C_DEV_NAME    "at24c256_i2c"
-#define AT24C256_WRITE_TIMEOUT_MS 5
+#define AT24C256_WRITE_TIMEOUT_MS 20
 #define AT24C256_PAGE_SIZE 64
 
 static struct i2c_client *g_client;
@@ -19,16 +20,13 @@ static dev_t devno;
 static struct class *at24c256_class;
 static struct cdev at24c256_cdev;
 
+/* ACK 폴링(zero-length write)이 이 보드의 Tegra i2c 컨트롤러에서 계속
+ * 실패해서(타임아웃을 늘려도 그대로 실패 = 시간 문제가 아니라 그 트랜잭션
+ * 자체가 이 조합에서 안 되는 것) 고정 딜레이로 대체함. */
 static int at24c256_wait_ready(void)
 {
-    unsigned long timeout = jiffies + msecs_to_jiffies(AT24C256_WRITE_TIMEOUT_MS);
-
-    do {
-        if (i2c_master_send(g_client, NULL, 0) >= 0)
-            return 0;
-    } while (time_before(jiffies, timeout));
-
-    return -EIO;
+    msleep(AT24C256_WRITE_TIMEOUT_MS);
+    return 0;
 }
 
 static ssize_t at24c256_write(struct file *filp, const char __user *buf, size_t count, loff_t *off)
@@ -187,13 +185,21 @@ static const struct of_device_id at24c256_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, at24c256_of_match);
 
+/* id_table 없으면 이 커널의 i2c_device_probe()가 probe() 호출 전에 -ENODEV로 반환함 */
+static const struct i2c_device_id at24c256_id[] = {
+    { "at24c256-i2c", 0 },
+    { }
+};
+MODULE_DEVICE_TABLE(i2c, at24c256_id);
+
 static struct i2c_driver at24c256_driver = {
     .driver = {
         .name = "at24c256_i2c",
         .of_match_table = at24c256_of_match,
     },
     .probe = at24c256_probe,
-    .remove = at24c256_remove
+    .remove = at24c256_remove,
+    .id_table = at24c256_id,
 };
 
 module_i2c_driver(at24c256_driver);

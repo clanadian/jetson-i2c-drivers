@@ -2,7 +2,7 @@
 /plugin/;
 
 / {
-    overlay-name = "SSD1306 on I2C1";
+    overlay-name = "AT24C256 on I2C1";
     compatible = "nvidia,tegra210";
 
     fragment@0 {
@@ -12,9 +12,9 @@
             #size-cells = <0>;
             status = "okay";
 
-            ssd1306@3c {
-                compatible = "ssd1306-i2c";
-                reg = <0x3c>;
+            at24c256@50 {
+                compatible = "at24c256-i2c";
+                reg = <0x50>;                /* A0~A2 = GND 기준 */
             };
         };
     };

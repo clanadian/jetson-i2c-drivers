@@ -1,0 +1,161 @@
+# my_nano_i2c
+
+**Jetson Nano에서 I2C 디바이스 3종(IMU·EEPROM·OLED)의 리눅스 커널 드라이버를 밑바닥부터 작성하고, 센서 캘리브레이션 파이프라인으로 검증한 프로젝트**
+
+센서 자체의 초기 바이어스(zero-offset)를 제거해야 안정적인 기울기 추정이 가능하므로, MPU6050의
+정지 상태 샘플을 덤프해 평균 오프셋을 구하고 AT24C256 EEPROM에 영구 저장한다. 메인 앱은 기동 시
+EEPROM에서 오프셋을 로드해 MPU6050 값을 실시간 보정하고, 상보필터로 구한 기울기 각도(PITCH/ROLL)와
+함께 SSD1306 OLED에 표시한다.
+
+디바이스 트리 오버레이 → 커널 드라이버(char device) → 유저스페이스 앱까지 전 계층을 다루며,
+캘리브레이션 파이프라인과 메인 앱 모두 실제 Jetson Nano에서 엔드투엔드 검증 완료
+(덤프 → 평균 → EEPROM 저장 → 콜드부트 후 유지 확인 → 실시간 보정 표시).
+
+## 시스템 구성
+
+```
+ [MPU6050(GY-521), 0x68]  [AT24C256, 0x50]  [SSD1306, 0x3C]
+          └───────────────────┴───────┬────────┘
+                                      │ I2C bus 1 — 40핀 Pin3(SDA)/Pin5(SCL), 100kHz
+                                      ▼
+                               [Jetson Nano]  L4T 32.7.6, kernel 4.9.337-tegra
+                                      │
+                     커널 드라이버 3종(char device) ↔ 유저스페이스 앱
+
+ 캘리브레이션 : MPU 300샘플 덤프 → 평균 오프셋(1g 벡터 검산) → EEPROM 영구 저장
+ 메인 앱     : EEPROM 오프셋 로드 → 실시간 보정 + 상보필터 각도 → OLED 5Hz 표시
+```
+
+소프트웨어 계층(예: MPU6050 read 경로):
+
+```
+ [유저 앱]  read(fd, &data, sizeof(data))
+      │
+ [캐릭터 디바이스 드라이버]  mpu6050_i2c.c — file_operations.read
+      │  i2c_transfer(adapter, msgs, 2)
+ [리눅스 I2C 코어]  i2c-core — of_match_table 기반 probe 디스패치
+      │
+ [Tegra I2C 컨트롤러 드라이버]  i2c-tegra — 패킷 헤더 구성, FIFO 전송
+      │
+ [물리 센서]  MPU6050, 레지스터 버스트 응답
+```
+
+| 디바이스 | 주소 | 역할 | 드라이버 인터페이스 |
+|---|---|---|---|
+| GY-521 (MPU6050 표기 — 실측 WHO_AM_I=0x70, 클론/MPU6500 계열 추정) | 0x68 | 가속도/자이로 | `read()` — 14B 버스트 → struct |
+| AT24C256 | 0x50 | 캘리브레이션 영구 저장 | `read()`/`write()` — f_pos = 메모리 주소 |
+| SSD1306 128x64 | 0x3C | 결과 표시 | `write()`(글자당 6B 비트맵) / `llseek` / `ioctl`(CLEAR) |
+
+전 모듈 3.3V(Pin 1) 전원 — 젯슨 40핀 헤더는 3.3V 로직 전용이므로 5V 레일은 쓰지 않는다.
+
+## 저장소 구성
+
+```
+├── driver/              # 커널 모듈 3종 (out-of-tree, Jetson에서 빌드)
+│   ├── mpu6050_i2c.c    #   센서: i2c_transfer 버스트 리드, WHO_AM_I 검증(재시도), DLPF 설정
+│   ├── at24c256_i2c.c   #   EEPROM: 2바이트 주소 지정 read/write, write cycle 대기
+│   └── ssd1306_i2c.c    #   OLED: 글자 셀 단위 write, lseek 위치 지정, clear ioctl
+├── include/             # 커널·유저스페이스 공유 ABI 헤더 (구조체 레이아웃, ioctl 코드)
+├── dts/                 # 디바이스 트리 오버레이 3종 (fdtoverlay로 베이스 DTB에 병합)
+├── tools/               # 캘리브레이션 파이프라인 앱 4종 (단계별 검증)
+└── app/                 # 메인 앱: EEPROM 로드 → 실시간 보정 + 각도 → OLED 표시
+```
+
+## 빌드 & 실행
+
+개발은 WSL2에서 하고 rsync로 동기화하며, 빌드는 전부 Jetson Nano 위에서 네이티브로 한다.
+사전 준비: 오버레이 컴파일용 `device-tree-compiler`(dtc), 그리고 타겟 커널(4.9.337-tegra)과
+정확히 일치하는 커널 헤더(`driver/Makefile`의 `KDIR`이 `/usr/src`의 해당 경로를 참조)가 필요하다.
+
+### 1. 디바이스 트리 오버레이 (최초 1회)
+
+```bash
+cd dts
+dtc -@ -O dtb -o mpu6050-overlay.dtbo mpu6050-overlay.dts     # x3
+sudo fdtoverlay -i /boot/tegra210-p3448-0000-p3449-0000-b00.dtb \
+    -o /boot/tegra210-nano-mycustom.dtb *.dtbo
+# /boot/extlinux/extlinux.conf에 FDT 줄 포함한 새 부트 항목 추가 후 재부팅
+ls /proc/device-tree/i2c@7000c400/    # mpu6050@68, at24c256@50, ssd1306@3c 확인
+```
+
+라즈베리파이(`config.txt`의 dtoverlay 자동 병합)와 달리, 젯슨(L4T 32.x)은 오버레이를
+부트 전에 직접 병합해서 완성본 DTB를 부트로더에 지정해야 한다. `/boot/extlinux/extlinux.conf`의
+원본 항목(`primary`)은 그대로 두고, 새 DTB를 가리키는 항목만 추가하는 방식으로 적용한다:
+
+```
+LABEL custom
+      MENU LABEL custom kernel with i2c overlays
+      LINUX /boot/Image
+      INITRD /boot/initrd
+      FDT /boot/tegra210-nano-mycustom.dtb
+      APPEND ${cbootargs} quiet root=/dev/mmcblk0p1 rw rootwait rootfstype=ext4 console=ttyS0,115200n8 console=tty0 fbcon=map:0 net.ifnames=0
+```
+
+`DEFAULT`를 이 항목으로 바꾸되 `primary`는 지우지 않아서, 헤드리스(SSH 전용) 환경에서 오버레이가
+잘못돼도 SD카드를 분리해 원본 설정으로 되돌릴 수 있는 복구 경로를 확보한 채로 재부팅했다.
+
+### 2. 커널 드라이버
+
+```bash
+cd driver
+make
+sudo insmod mpu6050_i2c.ko && sudo insmod at24c256_i2c.ko && sudo insmod ssd1306_i2c.ko
+ls /dev/mpu6050_i2c /dev/at24c256_i2c /dev/ssd1306_i2c
+```
+
+### 3. 캘리브레이션 파이프라인
+
+센서를 실사용 자세로 고정한 뒤 순서대로 실행한다:
+
+```bash
+cd tools && make
+sudo ./mpu_dump_app          # 1. 300샘플 덤프 → mpu_dump.txt
+sudo ./calib_calc_app        # 2. 평균 오프셋 계산 → calib_avg.txt
+sudo ./eeprom_write_app      # 3. EEPROM에 영구 저장
+sudo ./eeprom_read_oled_app  # 4. 재독출 + OLED 표시로 검증
+```
+
+쓰기와 읽기를 별도 프로세스로 분리해 EEPROM 영구 저장을 실증하는 구조 — 콜드부트 후에도 유지 확인 완료.
+
+### 4. 메인 앱
+
+```bash
+cd app && make
+sudo ./main_app    # EEPROM 오프셋 로드 → 5Hz로 보정값 + PITCH/ROLL 표시, Ctrl+C 종료
+```
+
+## 트러블슈팅 (커널 드라이버 개발 중)
+
+이 하드웨어(Jetson Nano)·이 커널(L4T 4.9)에서만 겪을 수 있는 핵심 5건:
+
+| # | 증상 | 원인 | 해결 |
+|---|------|------|------|
+| 1 | `insmod` 성공, DT 매칭 조건 전부 정상인데 probe가 호출조차 안 됨 (로그 없음) | L4T 4.9의 `i2c_device_probe()`는 of_match 성공과 별개로 `id_table`이 NULL이면 -ENODEV — 최신 커널엔 없는 조건 | 드라이버 3종에 `i2c_device_id` 테이블 추가 (내용은 안 쓰이고 NULL 아님만 중요) |
+| 2 | EEPROM write cycle 대기용 ACK 폴링(zero-length write)이 매번 EREMOTEIO — 타임아웃 4배 늘려도 그대로 | Tegra I2C는 패킷 엔진이라 페이로드 길이를 "N-1"로 인코딩 — 0바이트 표현 자체가 불가 (메인라인은 `I2C_AQ_NO_ZERO_LEN` quirk로 공식화, 4.9엔 미백포트) | `msleep(20)` 고정 딜레이로 롤백 — 이 플랫폼에선 임시방편이 아니라 올바른 구현 |
+| 3 | AT24C256 2바이트 주소가 SMBus 래퍼로 표현 불가 + MPU 버스트 리드도 래퍼 경로에서 반복 실패 | SMBus 래퍼는 "command 1바이트" 형식 전용 (MPU 쪽은 배선 개선과 시기가 겹쳐 래퍼 단독 원인으로 단정하지 않음) | `i2c_transfer()` + `i2c_msg[]` 직접 구성으로 통일 |
+| 4 | 잘 되던 기기 여러 개가 `i2cdetect`에서 동시에 사라졌다 동시에 복귀 | 깨진 트랜잭션이 SDA를 잡는 버스 행 — 브레드보드 신호 불안정이 근본 원인 | "동시 실패=공유 자원, 단독 실패=개별 배선" 진단 규칙, 점퍼 단축 + probe 재시도/앱 스킵 방어 |
+| 5 | WHO_AM_I가 데이터시트 값(0x68)과 다름 / 캘리브레이션 값이 엉뚱함 | GY-521 실칩이 클론(실측 0x70) / 기울어진 자세로 덤프 | 체크값을 실측 기준으로 수정 / 저장 전 1g 벡터 검산 도입 |
+
+## 설계 노트
+
+- **공유 ABI 헤더 (`include/`)**: `read()`/`write()`로 오가는 구조체 레이아웃과 ioctl 코드는
+  커널과 유저스페이스가 같은 헤더를 include해 합의한다. `<linux/types.h>`의 `__s16`을 써서
+  양쪽 모두 typedef 트릭 없이 동작.
+- **디바이스 노드는 probe 성공 후 생성**: WHO_AM_I 검증(글리치 대비 재시도)과 센서 초기화가
+  성공한 경우에만 `/dev` 노드가 존재 — 드라이버 생명주기를 실제 하드웨어 상태와 일치시킴.
+- **노이즈 대책 2단 + 타이밍 파이프라인**: 칩 내장 DLPF(44Hz 대역폭, probe에서 레지스터로
+  활성화)로 1차 필터링된 신호를 20ms 간격으로 10샘플 폴링해 평균(√10≈3.2배 노이즈 감소)한 뒤,
+  그 결과를 200ms(5Hz) 주기로 OLED에 갱신한다 — 필터 대역폭·샘플링 주기·표시 주기가 서로 다른
+  세 개의 시간 축이라는 것을 인지하고 맞춘 구조. 필터는 센서 실리콘 안의 하드웨어로, 커널이
+  계산하는 것이 아니다.
+- **자세 기준 캘리브레이션**: 실사용 자세에서 캘리브레이션해 중력 방향이 오프셋에 포함된다
+  (baked-in) — 표시되는 각도는 "기준 자세 대비 상대 기울기"라는 것을 인지하고 쓰는 방식.
+  저장 전 정지 상태 accel 벡터 크기 ≈ 1g(16384) 검산으로 잘못된 오프셋의 전파를 차단.
+- **영구성 실증 구조**: EEPROM 쓰기 주체와 읽기 주체를 별도 프로세스로 분리하고 콜드부트
+  후 재독출로 검증 — 같은 프로세스 안에서 쓰고 읽으면 캐시/변수값과 구분되지 않기 때문.
+
+## 다음 프로젝트
+
+- MPU6050 INT 핀 + 인터럽트/워크큐 기반 읽기
+- 전역 캐시(g_cache) + mutex 동기화
+- 모듈 자동 로드 (`/lib/modules` + `modules-load.d`)

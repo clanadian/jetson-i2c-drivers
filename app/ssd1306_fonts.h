@@ -3,6 +3,6 @@
 
 #include <stdint.h>
 
-const uint8_t ssd1306xled_font6x8 [];
+extern const uint8_t ssd1306xled_font6x8 [];
 
 #endif //SSD1306_FONTS_H

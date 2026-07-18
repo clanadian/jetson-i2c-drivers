@@ -1,0 +1,29 @@
+# 커널 모듈 빌드 산출물
+*.ko
+*.o
+*.mod.c
+*.mod.o
+*.mod
+*.order
+*.symvers
+.tmp_versions/
+.*.cmd
+
+# 디바이스 트리 컴파일 산출물
+*.dtbo
+
+# 앱 바이너리
+app/main_app
+tools/mpu_dump_app
+tools/calib_calc_app
+tools/eeprom_write_app
+tools/eeprom_read_oled_app
+
+# 테스트 중간 데이터 (캘리브레이션 결과는 EEPROM이 원본)
+mpu_dump.txt
+calib_avg.txt
+
+# 비공개 문서 (깃허브 업로드 안 함)
+report.md
+trouble_shooting.md
+project.md

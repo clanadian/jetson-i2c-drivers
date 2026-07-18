@@ -1,0 +1,22 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    overlay-name = "MPU6050 on I2C1";
+    compatible = "nvidia,tegra210";
+
+    fragment@0 {
+        /* 40핀 헤더 3(SDA)/5(SCL)번 = /dev/i2c-1 = gen2 컨트롤러 */
+        target-path = "/i2c@7000c400";
+        __overlay__ {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            status = "okay";
+
+            mpu6050@68 {
+                compatible = "mpu6050-i2c";  /* 드라이버 of_match_table과 정확히 일치해야 함 */
+                reg = <0x68>;                /* AD0 = LOW 기준 */
+            };
+        };
+    };
+};

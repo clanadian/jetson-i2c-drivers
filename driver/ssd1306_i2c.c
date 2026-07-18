@@ -6,8 +6,9 @@
 #include <linux/device.h>
 #include <linux/cdev.h>
 #include <linux/uaccess.h>
+#include <linux/slab.h>
 
-#include "ssd1306_i2c.h"
+#include "../include/ssd1306_i2c.h"
 
 #define SSD1306_I2C_DEV_NAME    "ssd1306_i2c"
 #define SSD1306_MAX_LEN 1024
@@ -199,13 +200,21 @@ static const struct of_device_id ssd1306_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of,ssd1306_of_match);
 
+/* id_table 없으면 이 커널의 i2c_device_probe()가 probe() 호출 전에 -ENODEV로 반환함 */
+static const struct i2c_device_id ssd1306_id[] = {
+    { "ssd1306-i2c", 0 },
+    { }
+};
+MODULE_DEVICE_TABLE(i2c, ssd1306_id);
+
 static struct i2c_driver ssd1306_driver = {
     .driver = {
         .name = "ssd1306_i2c",
         .of_match_table = ssd1306_of_match,
     },
     .probe = ssd1306_probe,
-    .remove = ssd1306_remove
+    .remove = ssd1306_remove,
+    .id_table = ssd1306_id,
 };
 
 module_i2c_driver(ssd1306_driver);
