@@ -34,40 +34,19 @@ Character Device Driver, Embedded C, Jetson Nano(L4T), EEPROM, OLED
 
 ## 시스템 구성
 
-```
- [MPU6050(GY-521), 0x68]  [AT24C256, 0x50]  [SSD1306, 0x3C]
-          └───────────────────┴───────┬────────┘
-                                      │ I2C bus 1 — 40핀 Pin3(SDA)/Pin5(SCL), 100kHz
-                                      ▼
-                               [Jetson Nano]  L4T 32.7.6, kernel 4.9.337-tegra
-                                      │
-                     커널 드라이버 3종(char device) ↔ 유저스페이스 앱
+<p align="center">
+  <img width="2720" height="2080" alt="nano_i2c_architecture_mono" src="https://github.com/user-attachments/assets/a78bca23-d6d6-460f-8e49-011ce33bbd87" />
+</p>
 
- 캘리브레이션 : MPU 300샘플 덤프 → 평균 오프셋(1g 벡터 검산) → EEPROM 영구 저장
- 메인 앱     : EEPROM 오프셋 로드 → 실시간 보정 + 상보필터 각도 → OLED 5Hz 표시
-```
-
-소프트웨어 계층(예: MPU6050 read 경로):
-
-```
- [유저 앱]  read(fd, &data, sizeof(data))
-      │
- [캐릭터 디바이스 드라이버]  mpu6050_i2c.c — file_operations.read
-      │  i2c_transfer(adapter, msgs, 2)
- [리눅스 I2C 코어]  i2c-core — of_match_table 기반 probe 디스패치
-      │
- [Tegra I2C 컨트롤러 드라이버]  i2c-tegra — 패킷 헤더 구성, FIFO 전송
-      │
- [물리 센서]  MPU6050, 레지스터 버스트 응답
-```
+<p align="center">
+  <em>시스템 아키텍처</em>
+</p>
 
 | 디바이스 | 주소 | 역할 | 드라이버 인터페이스 |
 |---|---|---|---|
 | GY-521 (MPU6050 표기 — 실측 WHO_AM_I=0x70, 클론/MPU6500 계열 추정) | 0x68 | 가속도/자이로 | `read()` — 14B 버스트 → struct |
 | AT24C256 | 0x50 | 캘리브레이션 영구 저장 | `read()`/`write()` — f_pos = 메모리 주소 |
 | SSD1306 128x64 | 0x3C | 결과 표시 | `write()`(글자당 6B 비트맵) / `llseek` / `ioctl`(CLEAR) |
-
-전 모듈 3.3V(Pin 1) 전원 — 젯슨 40핀 헤더는 3.3V 로직 전용이므로 5V 레일은 쓰지 않는다.
 
 ## 저장소 구성
 
