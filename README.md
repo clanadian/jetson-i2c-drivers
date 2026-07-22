@@ -1,3 +1,5 @@
+
+
 # jetson-i2c-drivers
 
 **Jetson Nano에서 I2C 디바이스 3종(IMU·EEPROM·OLED)의 리눅스 커널 캐릭터 디바이스 드라이버를 작성하고, 센서 캘리브레이션 파이프라인으로 검증한 프로젝트**
@@ -34,9 +36,8 @@ Character Device Driver, Embedded C, Jetson Nano(L4T), EEPROM, OLED
 <details>
 <summary>구현 영상</summary>
 
-<!-- TODO: video src에 업로드한 영상 URL(예: GitHub user-attachments/assets/...) 붙여넣기 -->
 <p align="center">
-  <video src="영상 URL" controls width="100%"></video>
+  <video src="https://github.com/user-attachments/assets/2c8e9009-fb06-4c40-82c0-9d5fe63de9e0" controls width="100%"></video>
 </p>
 
 <p align="center">
