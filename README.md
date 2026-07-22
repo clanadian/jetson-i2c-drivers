@@ -88,6 +88,9 @@ Character Device Driver, Embedded C, Jetson Nano(L4T), EEPROM, OLED
 
 ## 설계 노트
 
+- **IIO 대신 Custom Char Device**: MPU6050은 메인라인에 IIO(Industrial I/O) 드라이버가 이미
+  있지만, 이 프로젝트는 `i2c_transfer`부터 캐릭터 디바이스 인터페이스까지 프로토콜 레벨을
+  직접 구현하는 게 목표라 표준 서브시스템 대신 최소 구현으로 갔다.
 - **공유 ABI 헤더 (`include/`)**: `read()`/`write()`로 오가는 구조체 레이아웃과 ioctl 코드는
   커널과 유저스페이스가 같은 헤더를 include해 합의한다. `<linux/types.h>`의 `__s16`을 써서
   양쪽 모두 typedef 트릭 없이 동작.
